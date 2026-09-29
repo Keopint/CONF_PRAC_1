@@ -1,0 +1,26 @@
+# Служебные файлы Python (Г3)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Артефакты сборки (Г4)
+build/
+dist/
+*.egg-info/
+
+# Настройки редакторов (Г5)
+.idea/
+.vscode/
+*.swp
+
+# Архивы и бинарники (Г1, Г2)
+*.zip
+*.tar.gz
+*.exe
+*.dll
+*.bin
