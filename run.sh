@@ -1,4 +1,9 @@
 #!/bin/bash
-# Скрипт запуска эмулятора (для Windows и Unix)
 export PYTHONIOENCODING=utf-8
-python src/main.py "$@"
+
+# winpty нужен только в Git Bash на Windows
+if command -v winpty >/dev/null 2>&1; then
+    winpty python -u src/main.py "$@"
+else
+    python -u src/main.py "$@"
+fi
