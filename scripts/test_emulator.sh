@@ -1,5 +1,5 @@
 #!/bin/bash
-# Тестирование этапа 3: VFS из CSV-файла
+# Тестирование этапа 4
 # Вариант 18
 
 export PYTHONIOENCODING=utf-8
@@ -19,22 +19,14 @@ run() {
 
 run "1. Минимальная VFS" \
     --vfs vfs_samples/vfs_minimal.csv \
-    --script start_scripts/stage3_commands.txt
+    --script start_scripts/stage4_commands.txt
 
-run "2. VFS с файлами и подкаталогом" \
+run "2. VFS с файлами и subdir" \
     --vfs vfs_samples/vfs_files.csv \
-    --script start_scripts/stage3_commands.txt
+    --script start_scripts/stage4_commands.txt
 
 run "3. VFS с 3 уровнями вложенности" \
     --vfs vfs_samples/vfs_deep.csv \
-    --script start_scripts/stage3_commands.txt
-
-run "4. Ошибка: файл не найден" \
-    --vfs vfs_samples/no_such.csv \
-    --script start_scripts/stage3_commands.txt
-
-run "5. Ошибка: неверный формат (родитель не существует)" \
-    --vfs vfs_samples/vfs_invalid.csv \
-    --script start_scripts/stage3_commands.txt
+    --script start_scripts/stage4_commands.txt
 
 read -p "Нажмите Enter, чтобы закрыть..."

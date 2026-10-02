@@ -2,5 +2,5 @@ type,name,parent,permissions,data
 dir,/,/,755,
 dir,level1,/,755,
 dir,level2,/level1,755,
-dir,level3,/level2,755,
-file,deep.txt,/level3,644,ZGVlcA==
+dir,level3,/level1/level2,755,
+file,deep.txt,/level1/level2/level3,644,ZGVlcA==

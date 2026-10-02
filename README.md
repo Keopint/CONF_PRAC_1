@@ -27,7 +27,7 @@ file,nested.txt,/subdir,644,bmVzdGVk
 - `permissions` — восьмеричные права;
 - `data` — содержимое файла в base64 (для директорий пусто).
 
-## Этап 3. VFS
+## VFS
 - VFS загружается из CSV-файла в память.
 - Двоичные данные хранятся в base64.
 - Ошибки загрузки: файл не найден, неверный формат,
@@ -40,5 +40,27 @@ file,nested.txt,/subdir,644,bmVzdGVk
 bash scripts/test_emulator.sh
 ```
 
-## Коммиты
-Сообщения в стиле Conventional Commits.
+## Основные команды
+- `ls [-l] [-a] [путь]` — список содержимого директории VFS.
+  - `-l` — длинный формат (тип, права, размер, имя);
+  - `-a` — показывать скрытые файлы (с точкой).
+- `cd [путь]` — смена директории внутри VFS.
+  - Поддерживает `/`, `.`, `..`, `~`, относительные пути.
+- `uptime` — реальное время работы эмулятора в формате
+  `HH:MM:SS up H:MM, 1 user, load average: ...`.
+- `history [N]` — история команд. С `N` — последние N.
+
+### Пример
+
+```
+[user@host]$ ls -l /subdir
+-rw-r--r--         7  nested.txt
+
+[user@host]$ cd /subdir
+[user@host]$ uptime
+ 14:32:15 up 0:02, 1 user, load average: 0.00, 0.01, 0.05
+
+[user@host]$ history 2
+    1  cd /subdir
+    2  uptime
+```

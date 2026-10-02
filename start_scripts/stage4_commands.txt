@@ -1,0 +1,38 @@
+# Этап 4. Основные команды: ls, cd, uptime, history
+
+# Справка и информация
+help
+vfs-info
+
+# ls в корне VFS
+ls
+ls -l
+ls -a
+ls -la
+
+# Навигация по VFS
+cd subdir
+ls
+cd ..
+cd .
+cd /
+ls
+
+# ls по указанному пути
+ls /subdir
+
+# uptime — реальное время работы эмулятора
+uptime
+
+# history — история команд
+history
+history 3
+
+# Обработка ошибок
+cd no_such_dir
+ls /no/such/path
+ls /readme.txt/extra
+uptime extra_arg
+history abc
+
+# exit

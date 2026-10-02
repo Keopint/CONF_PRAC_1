@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import argparse
 import base64
 import csv
@@ -9,6 +6,8 @@ import sys
 import os
 import socket
 import getpass
+import time
+import datetime
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -27,30 +26,27 @@ class VirtualFileSystem:
     def load(self, path):
         if not os.path.isfile(path):
             raise FileNotFoundError(f"Файл не найден: {path}")
-
         try:
             with open(path, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                rows = list(reader)
+                rows = list(csv.DictReader(f))
         except (OSError, UnicodeDecodeError) as e:
             raise ValueError(f"Не удалось прочитать файл: {e}")
 
         if not rows:
             raise ValueError("Пустой CSV-файл")
 
-        required = {"type", "name", "parent", "permissions", "data"}
+        required = {"type", "name", "parent",
+                    "permissions", "data"}
         if not required.issubset(rows[0].keys()):
-            raise ValueError("Неверный формат CSV: пропущены колонки")
+            raise ValueError("Неверный формат CSV")
 
         new_root = {"type": "dir", "children": {},
                     "permissions": 0o755, "data": None}
-
         for i, row in enumerate(rows, start=2):
             try:
                 self._insert(new_root, row)
             except ValueError as e:
-                raise ValueError(f"Ошибка в строке {i}: {e}")
-
+                raise ValueError(f"Строка {i}: {e}")
         self.root = new_root
         self.current = []
         self.source = path
@@ -62,32 +58,30 @@ class VirtualFileSystem:
         try:
             perms = int(row["permissions"], 8)
         except ValueError:
-            raise ValueError(f"неверные права: {row['permissions']}")
-
+            raise ValueError(f"права: {row['permissions']}")
         if typ not in ("dir", "file"):
-            raise ValueError(f"неизвестный тип: {typ}")
+            raise ValueError(f"тип: {typ}")
 
-        node = {"type": typ, "permissions": perms}
         if typ == "file":
             raw = (row.get("data") or "").strip()
             if raw:
                 try:
-                    node["data"] = base64.b64decode(raw)
+                    data = base64.b64decode(raw)
                 except Exception:
-                    raise ValueError(f"некорректный base64: {raw!r}")
+                    raise ValueError(f"base64: {raw!r}")
             else:
-                node["data"] = b""
-            node["children"] = None
+                data = b""
+            node = {"type": "file", "permissions": perms,
+                    "children": None, "data": data}
         else:
-            node["children"] = {}
-            node["data"] = None
+            node = {"type": "dir", "permissions": perms,
+                    "children": {}, "data": None}
 
         parent_node = self._find(root, parent)
         if parent_node is None:
-            raise ValueError(f"родитель не найден: {parent}")
+            raise ValueError(f"родитель: {parent}")
         if parent_node["type"] != "dir":
             raise ValueError(f"родитель не каталог: {parent}")
-
         parent_node["children"][name] = node
 
     def _find(self, root, path):
@@ -151,6 +145,18 @@ class VirtualFileSystem:
         return "VFS по умолчанию (пустая)"
 
 
+class EmulatorState:
+    def __init__(self):
+        self.start_time = time.time()
+        self.history = []
+
+    def add(self, line):
+        self.history.append(line)
+
+    def uptime(self):
+        return int(time.time() - self.start_time)
+
+
 class EmulatorConfig:
     def __init__(self, vfs_path=None, script_path=None):
         self.vfs_path = vfs_path
@@ -167,10 +173,14 @@ class EmulatorConfig:
         print()
 
 
-def get_prompt():
+def get_user_host():
     username = getpass.getuser()
     hostname = socket.gethostname()
-    return f"[{username}@{hostname}]$ "
+    return f"{username}@{hostname}"
+
+
+def get_prompt(vfs):
+    return f"{get_user_host()}:{vfs.current_path}$ "
 
 
 def parse_command(line):
@@ -181,40 +191,177 @@ def parse_command(line):
         return []
 
 
-def cmd_ls(args, vfs):
-    print(f"ls: команда-заглушка. Аргументы: {args}")
+def _mode_str(mode):
+    parts = []
+    for shift in (6, 3, 0):
+        bits = (mode >> shift) & 0b111
+        parts.append("r" if bits & 4 else "-")
+        parts.append("w" if bits & 2 else "-")
+        parts.append("x" if bits & 1 else "-")
+    return "".join(parts)
+
+
+def cmd_ls(args, vfs, state):
+    show_all = False
+    long_format = False
+    path = None
+    for a in args:
+        if a == "-a":
+            show_all = True
+        elif a == "-l":
+            long_format = True
+        elif a.startswith("-") and len(a) > 1:
+            for flag in a[1:]:
+                if flag == "a":
+                    show_all = True
+                elif flag == "l":
+                    long_format = True
+                else:
+                    print(f"ls: неизвестный параметр: -{flag}")
+                    return False
+        elif a == "--all":
+            show_all = True
+        else:
+            if path is not None:
+                print("ls: слишком много аргументов")
+                return False
+            path = a
+
+    if path is None:
+        comps = list(vfs.current)
+    else:
+        comps = vfs.resolve(path)
+
+    node = vfs.get_node(comps)
+    if node is None:
+        print(f"ls: невозможно получить доступ "
+              f"к '{path}': Нет такого файла или каталога")
+        return False
+
+    if node["type"] == "file":
+        if long_format:
+            perms = _mode_str(node.get("permissions", 0o644))
+            size = len(node.get("data") or b"")
+            name = path if path else "."
+            print(f"-{perms}  {size:>8}  {name}")
+        else:
+            print(path if path else ".")
+        return True
+
+    names = sorted(node["children"].keys())
+    if not show_all:
+        names = [n for n in names if not n.startswith(".")]
+    if not names:
+        return True
+
+    if long_format:
+        for name in names:
+            child = node["children"][name]
+            perms = _mode_str(child.get("permissions", 0o644))
+            if child["type"] == "dir":
+                print(f"d{perms}  {'<DIR>':>8}  {name}")
+            else:
+                size = len(child.get("data") or b"")
+                print(f"-{perms}  {size:>8}  {name}")
+    else:
+        print("  ".join(names))
     return True
 
 
-def cmd_cd(args, vfs):
-    print(f"cd: команда-заглушка. Аргументы: {args}")
+def cmd_cd(args, vfs, state):
+    if len(args) > 1:
+        print("cd: слишком много аргументов")
+        return False
+    path = args[0] if args else "~"
+    comps = vfs.resolve(path)
+    node = vfs.get_node(comps)
+    if node is None:
+        print(f"cd: {path}: Нет такого файла или каталога")
+        return False
+    if node["type"] != "dir":
+        print(f"cd: {path}: Не является каталогом")
+        return False
+    vfs.current = comps
     return True
 
 
-def cmd_vfs_info(args, vfs):
+def cmd_uptime(args, vfs, state):
+    if args:
+        print("uptime: команда не принимает аргументов")
+        return False
+    sec = state.uptime()
+    h = sec // 3600
+    m = (sec % 3600) // 60
+    now = datetime.datetime.now().strftime("%H:%M:%S")
+    print(f" {now} up {h}:{m:02d}, 1 user, "
+          f"load average: 0.00, 0.01, 0.05")
+    return True
+
+
+def cmd_history(args, vfs, state):
+    items = list(state.history)
+    if items and items[-1].strip().startswith("history"):
+        items = items[:-1]
+
+    start = 0
+    if args:
+        if len(args) > 1:
+            print("history: слишком много аргументов")
+            return False
+        try:
+            n = int(args[0])
+            if n < 0:
+                print("history: число отрицательное")
+                return False
+            start = max(0, len(items) - n)
+        except ValueError:
+            print(f"history: неверное число: '{args[0]}'")
+            return False
+
+    for i, cmd in enumerate(items[start:], start=start + 1):
+        print(f"{i:5d}  {cmd}")
+    return True
+
+
+def cmd_vfs_info(args, vfs, state):
     print(vfs.describe())
     print(f"Текущая директория: {vfs.current_path}")
     print(f"Всего элементов: {vfs.count()}")
     return True
 
 
+def cmd_help(args, vfs, state):
+    print("Доступные команды:")
+    print("  ls [-l] [-a] [путь]  — список содержимого")
+    print("  cd [путь]            — смена директории")
+    print("  uptime               — время работы эмулятора")
+    print("  history [N]          — история команд")
+    print("  vfs-info             — информация о VFS")
+    print("  help                 — справка")
+    print("  exit                 — выход")
+    return True
+
+
 COMMANDS = {
     "ls": cmd_ls,
     "cd": cmd_cd,
+    "uptime": cmd_uptime,
+    "history": cmd_history,
     "vfs-info": cmd_vfs_info,
+    "help": cmd_help,
 }
 
 
-def execute_command(command, args, vfs):
+def execute_command(command, args, vfs, state):
     if command == "exit":
         return True
     if command in COMMANDS:
-        return COMMANDS[command](args, vfs)
+        return COMMANDS[command](args, vfs, state)
     print(f"Эмулятор: команда не найдена: {command}")
     return False
 
 
-def run_script(script_path, vfs, prompt):
+def run_script(script_path, vfs, state):
     if not os.path.isfile(script_path):
         print(f"Ошибка: скрипт не найден: {script_path}")
         return
@@ -228,7 +375,8 @@ def run_script(script_path, vfs, prompt):
             if not line.strip() or line.strip().startswith("#"):
                 continue
 
-            print(f"{prompt}{line}")
+            print(f"{get_prompt(vfs)}{line}")
+            state.add(line)
             parts = parse_command(line)
             if not parts:
                 print(f"Ошибка в строке {line_num}")
@@ -242,7 +390,7 @@ def run_script(script_path, vfs, prompt):
                 print("Выход из эмулятора.")
                 sys.exit(0)
 
-            if not execute_command(command, args, vfs):
+            if not execute_command(command, args, vfs, state):
                 print(f"Ошибка в строке {line_num}")
                 errors += 1
 
@@ -253,20 +401,22 @@ def run_script(script_path, vfs, prompt):
         print("Скрипт выполнен успешно.")
 
 
-def repl(vfs, prompt):
+def repl(vfs, state):
     print(f"Добро пожаловать в эмулятор оболочки. "
           f"{vfs.describe()}")
-    print("Введите 'exit' для выхода.\n")
+    print("Введите 'help' для списка команд.\n")
 
     while True:
         try:
-            line = input(prompt)
+            line = input(get_prompt(vfs))
         except (EOFError, KeyboardInterrupt):
             print("\nВыход.")
             break
 
         if not line.strip():
             continue
+
+        state.add(line)
 
         parts = parse_command(line)
         if not parts:
@@ -279,8 +429,7 @@ def repl(vfs, prompt):
             print("Выход из эмулятора.")
             break
 
-        execute_command(command, args, vfs)
-
+        execute_command(command, args, vfs, state)
 
 def main():
     parser = argparse.ArgumentParser(
@@ -297,7 +446,8 @@ def main():
     )
     args = parser.parse_args()
 
-    config = EmulatorConfig(vfs_path=args.vfs, script_path=args.script)
+    config = EmulatorConfig(vfs_path=args.vfs,
+                            script_path=args.script)
     config.debug_print()
 
     vfs = VirtualFileSystem()
@@ -309,14 +459,14 @@ def main():
             print(f"Ошибка загрузки VFS: {e}")
             sys.exit(1)
     else:
-        print("VFS не указана, используется пустая по умолчанию.")
+        print("VFS не указана, используется пустая.")
 
-    prompt = get_prompt()
+    state = EmulatorState()
 
     if args.script:
-        run_script(args.script, vfs, prompt)
+        run_script(args.script, vfs, state)
 
-    repl(vfs, prompt)
+    repl(vfs, state)
 
 
 if __name__ == "__main__":
