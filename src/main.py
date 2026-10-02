@@ -1,6 +1,7 @@
 import argparse
 import base64
 import csv
+import re
 import shlex
 import sys
 import os
@@ -13,6 +14,83 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
+
+# ============================================================
+#  Утилиты chmod
+# ============================================================
+
+def mode_to_string(mode):
+    chars = []
+    for shift in (6, 3, 0):
+        bits = (mode >> shift) & 0b111
+        chars.append("r" if bits & 4 else "-")
+        chars.append("w" if bits & 2 else "-")
+        chars.append("x" if bits & 1 else "-")
+    return "".join(chars)
+
+
+def parse_symbolic_mode(current, mode_str):
+    result = current
+    for clause in mode_str.split(","):
+        m = re.match(r"^([ugoa]*)([+\-=])([rwx]*)$", clause)
+        if not m:
+            return None
+        who, op, perm_chars = m.groups()
+        if not who:
+            who = "a"
+
+        if "a" in who:
+            shifts = [6, 3, 0]
+        else:
+            shifts = []
+            for c in who:
+                if c == "u":
+                    shifts.append(6)
+                elif c == "g":
+                    shifts.append(3)
+                elif c == "o":
+                    shifts.append(0)
+
+        bits = 0
+        for p in perm_chars:
+            if p == "r":
+                bits |= 4
+            elif p == "w":
+                bits |= 2
+            elif p == "x":
+                bits |= 1
+            else:
+                return None
+
+        for shift in shifts:
+            mask = 0b111 << shift
+            if op == "+":
+                result |= (bits << shift)
+            elif op == "-":
+                result &= ~(bits << shift)
+            elif op == "=":
+                result = (result & ~mask) | (bits << shift)
+    return result & 0o777
+
+
+def parse_chmod_mode(current, mode_str):
+    if re.match(r"^[0-7]{1,4}$", mode_str):
+        try:
+            value = int(mode_str, 8)
+        except ValueError:
+            return None
+        return value & 0o777
+    if re.match(
+        r"^[ugoa]*[+\-=][rwx]*(,[ugoa]*[+\-=][rwx]*)*$",
+        mode_str,
+    ):
+        return parse_symbolic_mode(current, mode_str)
+    return None
+
+
+# ============================================================
+#  VFS
+# ============================================================
 
 class VirtualFileSystem:
     def __init__(self, csv_path=None):
@@ -31,15 +109,12 @@ class VirtualFileSystem:
                 rows = list(csv.DictReader(f))
         except (OSError, UnicodeDecodeError) as e:
             raise ValueError(f"Не удалось прочитать файл: {e}")
-
         if not rows:
             raise ValueError("Пустой CSV-файл")
-
         required = {"type", "name", "parent",
                     "permissions", "data"}
         if not required.issubset(rows[0].keys()):
             raise ValueError("Неверный формат CSV")
-
         new_root = {"type": "dir", "children": {},
                     "permissions": 0o755, "data": None}
         for i, row in enumerate(rows, start=2):
@@ -61,7 +136,6 @@ class VirtualFileSystem:
             raise ValueError(f"права: {row['permissions']}")
         if typ not in ("dir", "file"):
             raise ValueError(f"тип: {typ}")
-
         if typ == "file":
             raw = (row.get("data") or "").strip()
             if raw:
@@ -76,7 +150,6 @@ class VirtualFileSystem:
         else:
             node = {"type": "dir", "permissions": perms,
                     "children": {}, "data": None}
-
         parent_node = self._find(root, parent)
         if parent_node is None:
             raise ValueError(f"родитель: {parent}")
@@ -174,9 +247,7 @@ class EmulatorConfig:
 
 
 def get_user_host():
-    username = getpass.getuser()
-    hostname = socket.gethostname()
-    return f"{username}@{hostname}"
+    return f"{getpass.getuser()}@{socket.gethostname()}"
 
 
 def get_prompt(vfs):
@@ -191,15 +262,9 @@ def parse_command(line):
         return []
 
 
-def _mode_str(mode):
-    parts = []
-    for shift in (6, 3, 0):
-        bits = (mode >> shift) & 0b111
-        parts.append("r" if bits & 4 else "-")
-        parts.append("w" if bits & 2 else "-")
-        parts.append("x" if bits & 1 else "-")
-    return "".join(parts)
-
+# ============================================================
+#  Команды
+# ============================================================
 
 def cmd_ls(args, vfs, state):
     show_all = False
@@ -227,11 +292,7 @@ def cmd_ls(args, vfs, state):
                 return False
             path = a
 
-    if path is None:
-        comps = list(vfs.current)
-    else:
-        comps = vfs.resolve(path)
-
+    comps = list(vfs.current) if path is None else vfs.resolve(path)
     node = vfs.get_node(comps)
     if node is None:
         print(f"ls: невозможно получить доступ "
@@ -240,10 +301,9 @@ def cmd_ls(args, vfs, state):
 
     if node["type"] == "file":
         if long_format:
-            perms = _mode_str(node.get("permissions", 0o644))
+            perms = mode_to_string(node.get("permissions", 0o644))
             size = len(node.get("data") or b"")
-            name = path if path else "."
-            print(f"-{perms}  {size:>8}  {name}")
+            print(f"-{perms}  {size:>8}  {path if path else '.'}")
         else:
             print(path if path else ".")
         return True
@@ -257,7 +317,7 @@ def cmd_ls(args, vfs, state):
     if long_format:
         for name in names:
             child = node["children"][name]
-            perms = _mode_str(child.get("permissions", 0o644))
+            perms = mode_to_string(child.get("permissions", 0o644))
             if child["type"] == "dir":
                 print(f"d{perms}  {'<DIR>':>8}  {name}")
             else:
@@ -285,6 +345,75 @@ def cmd_cd(args, vfs, state):
     return True
 
 
+def cmd_chmod(args, vfs, state):
+    recursive = False
+    positional = []
+    for a in args:
+        if a in ("-R", "--recursive"):
+            recursive = True
+        elif a in ("-h", "--help"):
+            print("Использование: chmod [-R] РЕЖИМ ФАЙЛ...")
+            print("  РЕЖИМ — числовой (755) или символьный (u+x,go-w,a=r)")
+            return True
+        elif a.startswith("-") and len(a) > 1 and not a[1].isdigit():
+            print(f"chmod: неизвестный параметр: {a}")
+            return False
+        else:
+            positional.append(a)
+
+    if len(positional) < 2:
+        print("chmod: не указан режим или файл")
+        print("Использование: chmod [-R] РЕЖИМ ФАЙЛ...")
+        return False
+
+    mode_str = positional[0]
+    targets = positional[1:]
+
+    is_octal = re.match(r"^[0-7]{1,4}$", mode_str)
+    is_symbolic = re.match(
+        r"^[ugoa]*[+\-=][rwx]*(,[ugoa]*[+\-=][rwx]*)*$",
+        mode_str,
+    )
+    if not is_octal and not is_symbolic:
+        print(f"chmod: неверный режим: '{mode_str}'")
+        return False
+
+    def apply(node):
+        current = node.get("permissions", 0o644)
+        new_mode = parse_chmod_mode(current, mode_str)
+        if new_mode is None:
+            return False
+        node["permissions"] = new_mode
+        return True
+
+    def apply_recursive(node):
+        ok = apply(node)
+        if node["type"] == "dir":
+            for child in node["children"].values():
+                if not apply_recursive(child):
+                    ok = False
+        return ok
+
+    overall_ok = True
+    for target in targets:
+        comps = vfs.resolve(target)
+        node = vfs.get_node(comps)
+        if node is None:
+            print(f"chmod: невозможно получить доступ "
+                  f"к '{target}': Нет такого файла или каталога")
+            overall_ok = False
+            continue
+        if recursive:
+            if not apply_recursive(node):
+                print(f"chmod: неверный режим: '{mode_str}'")
+                return False
+        else:
+            if not apply(node):
+                print(f"chmod: неверный режим: '{mode_str}'")
+                return False
+    return overall_ok
+
+
 def cmd_uptime(args, vfs, state):
     if args:
         print("uptime: команда не принимает аргументов")
@@ -302,7 +431,6 @@ def cmd_history(args, vfs, state):
     items = list(state.history)
     if items and items[-1].strip().startswith("history"):
         items = items[:-1]
-
     start = 0
     if args:
         if len(args) > 1:
@@ -317,7 +445,6 @@ def cmd_history(args, vfs, state):
         except ValueError:
             print(f"history: неверное число: '{args[0]}'")
             return False
-
     for i, cmd in enumerate(items[start:], start=start + 1):
         print(f"{i:5d}  {cmd}")
     return True
@@ -332,19 +459,21 @@ def cmd_vfs_info(args, vfs, state):
 
 def cmd_help(args, vfs, state):
     print("Доступные команды:")
-    print("  ls [-l] [-a] [путь]  — список содержимого")
-    print("  cd [путь]            — смена директории")
-    print("  uptime               — время работы эмулятора")
-    print("  history [N]          — история команд")
-    print("  vfs-info             — информация о VFS")
-    print("  help                 — справка")
-    print("  exit                 — выход")
+    print("  ls [-l] [-a] [путь]         — список содержимого")
+    print("  cd [путь]                   — смена директории")
+    print("  chmod [-R] РЕЖИМ ФАЙЛ...    — права доступа (в памяти)")
+    print("  uptime                      — время работы")
+    print("  history [N]                 — история команд")
+    print("  vfs-info                    — информация о VFS")
+    print("  help                        — справка")
+    print("  exit                        — выход")
     return True
 
 
 COMMANDS = {
     "ls": cmd_ls,
     "cd": cmd_cd,
+    "chmod": cmd_chmod,
     "uptime": cmd_uptime,
     "history": cmd_history,
     "vfs-info": cmd_vfs_info,
@@ -374,7 +503,6 @@ def run_script(script_path, vfs, state):
             line = raw.rstrip("\n")
             if not line.strip() or line.strip().startswith("#"):
                 continue
-
             print(f"{get_prompt(vfs)}{line}")
             state.add(line)
             parts = parse_command(line)
@@ -382,18 +510,14 @@ def run_script(script_path, vfs, state):
                 print(f"Ошибка в строке {line_num}")
                 errors += 1
                 continue
-
             command = parts[0]
             args = parts[1:]
-
             if command == "exit":
                 print("Выход из эмулятора.")
                 sys.exit(0)
-
             if not execute_command(command, args, vfs, state):
                 print(f"Ошибка в строке {line_num}")
                 errors += 1
-
     print()
     if errors:
         print(f"Скрипт завершён с ошибками: {errors}")
@@ -415,21 +539,17 @@ def repl(vfs, state):
 
         if not line.strip():
             continue
-
         state.add(line)
-
         parts = parse_command(line)
         if not parts:
             continue
-
         command = parts[0]
         args = parts[1:]
-
         if command == "exit":
             print("Выход из эмулятора.")
             break
-
         execute_command(command, args, vfs, state)
+
 
 def main():
     parser = argparse.ArgumentParser(

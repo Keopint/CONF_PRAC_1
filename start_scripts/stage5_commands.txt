@@ -1,0 +1,57 @@
+# Этап 5. Команда chmod
+
+# Справка
+help
+vfs-info
+
+# Исходное состояние
+ls -l
+
+# Числовой режим
+chmod 755 file1.txt
+ls -l file1.txt
+chmod 0644 file1.txt
+ls -l file1.txt
+
+# Символьный режим: добавление
+chmod u+x file1.txt
+ls -l file1.txt
+chmod go+x file1.txt
+ls -l file1.txt
+
+# Символьный режим: удаление
+chmod go-w file1.txt
+ls -l file1.txt
+chmod u-x file1.txt
+ls -l file1.txt
+
+# Символьный режим: присваивание
+chmod a=r file1.txt
+ls -l file1.txt
+chmod u=rwx file1.txt
+ls -l file1.txt
+
+# Комбинированный режим через запятую
+chmod u+x,g-w,o-r file2.txt
+ls -l file2.txt
+
+# Несколько целей сразу
+chmod 600 file1.txt file2.txt
+ls -l
+
+# Рекурсивный chmod на директорию
+chmod -R 750 subdir
+ls -l subdir
+ls -l
+
+# Обработка ошибок
+chmod 999 file1.txt
+chmod u+q file1.txt
+chmod
+chmod 755
+chmod 755 /no/such/file
+
+# Проверка, что изменения только в памяти
+vfs-info
+
+exit

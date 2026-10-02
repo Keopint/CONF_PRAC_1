@@ -1,5 +1,5 @@
 #!/bin/bash
-# Тестирование этапа 4
+# Тестирование этапа 5
 # Вариант 18
 
 export PYTHONIOENCODING=utf-8
@@ -17,16 +17,16 @@ run() {
     echo ""
 }
 
-run "1. Минимальная VFS" \
-    --vfs vfs_samples/vfs_minimal.csv \
-    --script start_scripts/stage4_commands.txt
-
-run "2. VFS с файлами и subdir" \
+run "1. VFS с файлами и subdir" \
     --vfs vfs_samples/vfs_files.csv \
-    --script start_scripts/stage4_commands.txt
+    --script start_scripts/stage5_commands.txt
 
-run "3. VFS с 3 уровнями вложенности" \
+run "2. Минимальная VFS" \
+    --vfs vfs_samples/vfs_minimal.csv \
+    --script start_scripts/stage5_commands.txt
+
+run "3. Глубокая VFS" \
     --vfs vfs_samples/vfs_deep.csv \
-    --script start_scripts/stage4_commands.txt
+    --script start_scripts/stage5_commands.txt
 
 read -p "Нажмите Enter, чтобы закрыть..."
