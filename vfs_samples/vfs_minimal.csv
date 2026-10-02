@@ -1,0 +1,3 @@
+type,name,parent,permissions,data
+dir,/,/,755,
+file,readme.txt,/,644,SGVsbG8gZnJvbSBWRlM=

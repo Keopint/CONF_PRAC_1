@@ -1,6 +1,6 @@
 #!/bin/bash
-# Тестирование параметров командной строки эмулятора
-# Вариант 18, этап 2
+# Тестирование этапа 3: VFS из CSV-файла
+# Вариант 18
 
 export PYTHONIOENCODING=utf-8
 
@@ -9,22 +9,32 @@ if command -v winpty >/dev/null 2>&1; then
     PY="winpty python -u src/main.py"
 fi
 
-echo "=== 1. Без параметров ==="
-echo "exit" | $PY
+run() {
+    local desc="$1"
+    shift
+    echo "=== $desc ==="
+    $PY "$@"
+    echo ""
+}
 
-echo ""
-echo "=== 2. Только VFS ==="
-echo "exit" | $PY --vfs ./vfs_samples
+run "1. Минимальная VFS" \
+    --vfs vfs_samples/vfs_minimal.csv \
+    --script start_scripts/stage3_commands.txt
 
-echo ""
-echo "=== 3. Только стартовый скрипт ==="
-$PY --script start_scripts/stage2_commands.txt
+run "2. VFS с файлами и подкаталогом" \
+    --vfs vfs_samples/vfs_files.csv \
+    --script start_scripts/stage3_commands.txt
 
-echo ""
-echo "=== 4. Оба параметра ==="
-$PY --vfs ./vfs_samples \
-    --script start_scripts/stage2_commands.txt
+run "3. VFS с 3 уровнями вложенности" \
+    --vfs vfs_samples/vfs_deep.csv \
+    --script start_scripts/stage3_commands.txt
 
-echo ""
-echo "=== 5. Несуществующий стартовый скрипт ==="
-$PY --script ./no_such_script.txt
+run "4. Ошибка: файл не найден" \
+    --vfs vfs_samples/no_such.csv \
+    --script start_scripts/stage3_commands.txt
+
+run "5. Ошибка: неверный формат (родитель не существует)" \
+    --vfs vfs_samples/vfs_invalid.csv \
+    --script start_scripts/stage3_commands.txt
+
+read -p "Нажмите Enter, чтобы закрыть..."

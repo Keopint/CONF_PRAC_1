@@ -1,0 +1,11 @@
+# Этап 3. Команды этапов 1-3 + работа с VFS
+
+vfs-info
+ls
+ls -la
+cd /home
+ls "folder with spaces"
+unknown_command
+vfs-info
+
+exit

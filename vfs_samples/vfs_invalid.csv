@@ -1,0 +1,3 @@
+type,name,parent,permissions,data
+dir,/,/,755,
+file,broken.txt,/missing,644,aGVsbG8=

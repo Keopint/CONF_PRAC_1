@@ -1,0 +1,6 @@
+type,name,parent,permissions,data
+dir,/,/,755,
+file,file1.txt,/,644,ZmlsZSAx
+file,file2.txt,/,644,ZmlsZSAy
+dir,subdir,/,755,
+file,nested.txt,/subdir,644,bmVzdGVk
