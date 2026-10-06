@@ -14,11 +14,6 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-
-# ============================================================
-#  Утилиты chmod
-# ============================================================
-
 def mode_to_string(mode):
     chars = []
     for shift in (6, 3, 0):
@@ -38,7 +33,6 @@ def parse_symbolic_mode(current, mode_str):
         who, op, perm_chars = m.groups()
         if not who:
             who = "a"
-
         if "a" in who:
             shifts = [6, 3, 0]
         else:
@@ -50,7 +44,6 @@ def parse_symbolic_mode(current, mode_str):
                     shifts.append(3)
                 elif c == "o":
                     shifts.append(0)
-
         bits = 0
         for p in perm_chars:
             if p == "r":
@@ -61,7 +54,6 @@ def parse_symbolic_mode(current, mode_str):
                 bits |= 1
             else:
                 return None
-
         for shift in shifts:
             mask = 0b111 << shift
             if op == "+":
@@ -87,10 +79,6 @@ def parse_chmod_mode(current, mode_str):
         return parse_symbolic_mode(current, mode_str)
     return None
 
-
-# ============================================================
-#  VFS
-# ============================================================
 
 class VirtualFileSystem:
     def __init__(self, csv_path=None):
@@ -262,16 +250,12 @@ def parse_command(line):
         return []
 
 
-# ============================================================
-#  Команды
-# ============================================================
-
-def cmd_ls(args, vfs, state):
+def _parse_ls_args(args):
     show_all = False
     long_format = False
     path = None
     for a in args:
-        if a == "-a":
+        if a in ("-a", "--all"):
             show_all = True
         elif a == "-l":
             long_format = True
@@ -283,14 +267,29 @@ def cmd_ls(args, vfs, state):
                     long_format = True
                 else:
                     print(f"ls: неизвестный параметр: -{flag}")
-                    return False
-        elif a == "--all":
-            show_all = True
+                    return None
         else:
             if path is not None:
                 print("ls: слишком много аргументов")
-                return False
+                return None
             path = a
+    return show_all, long_format, path
+
+
+def _print_long(node, name):
+    perms = mode_to_string(node.get("permissions", 0o644))
+    if node["type"] == "dir":
+        print(f"d{perms}  {'<DIR>':>8}  {name}")
+    else:
+        size = len(node.get("data") or b"")
+        print(f"-{perms}  {size:>8}  {name}")
+
+
+def cmd_ls(args, vfs, state):
+    parsed = _parse_ls_args(args)
+    if parsed is None:
+        return False
+    show_all, long_format, path = parsed
 
     comps = list(vfs.current) if path is None else vfs.resolve(path)
     node = vfs.get_node(comps)
@@ -301,11 +300,9 @@ def cmd_ls(args, vfs, state):
 
     if node["type"] == "file":
         if long_format:
-            perms = mode_to_string(node.get("permissions", 0o644))
-            size = len(node.get("data") or b"")
-            print(f"-{perms}  {size:>8}  {path if path else '.'}")
+            _print_long(node, path or ".")
         else:
-            print(path if path else ".")
+            print(path or ".")
         return True
 
     names = sorted(node["children"].keys())
@@ -316,13 +313,7 @@ def cmd_ls(args, vfs, state):
 
     if long_format:
         for name in names:
-            child = node["children"][name]
-            perms = mode_to_string(child.get("permissions", 0o644))
-            if child["type"] == "dir":
-                print(f"d{perms}  {'<DIR>':>8}  {name}")
-            else:
-                size = len(child.get("data") or b"")
-                print(f"-{perms}  {size:>8}  {name}")
+            _print_long(node["children"][name], name)
     else:
         print("  ".join(names))
     return True
@@ -345,7 +336,7 @@ def cmd_cd(args, vfs, state):
     return True
 
 
-def cmd_chmod(args, vfs, state):
+def _parse_chmod_args(args):
     recursive = False
     positional = []
     for a in args:
@@ -353,46 +344,65 @@ def cmd_chmod(args, vfs, state):
             recursive = True
         elif a in ("-h", "--help"):
             print("Использование: chmod [-R] РЕЖИМ ФАЙЛ...")
-            print("  РЕЖИМ — числовой (755) или символьный (u+x,go-w,a=r)")
-            return True
-        elif a.startswith("-") and len(a) > 1 and not a[1].isdigit():
+            print("  РЕЖИМ — числовой (755) "
+                  "или символьный (u+x,go-w,a=r)")
+            return None
+        elif a.startswith("-") and len(a) > 1 \
+                and not a[1].isdigit():
             print(f"chmod: неизвестный параметр: {a}")
-            return False
+            return None
         else:
             positional.append(a)
 
     if len(positional) < 2:
         print("chmod: не указан режим или файл")
         print("Использование: chmod [-R] РЕЖИМ ФАЙЛ...")
-        return False
+        return None
 
     mode_str = positional[0]
     targets = positional[1:]
 
-    is_octal = re.match(r"^[0-7]{1,4}$", mode_str)
-    is_symbolic = re.match(
+    if not _is_valid_mode(mode_str):
+        print(f"chmod: неверный режим: '{mode_str}'")
+        return None
+
+    return recursive, mode_str, targets
+
+
+def _is_valid_mode(mode_str):
+    if re.match(r"^[0-7]{1,4}$", mode_str):
+        return True
+    if re.match(
         r"^[ugoa]*[+\-=][rwx]*(,[ugoa]*[+\-=][rwx]*)*$",
         mode_str,
-    )
-    if not is_octal and not is_symbolic:
-        print(f"chmod: неверный режим: '{mode_str}'")
-        return False
-
-    def apply(node):
-        current = node.get("permissions", 0o644)
-        new_mode = parse_chmod_mode(current, mode_str)
-        if new_mode is None:
-            return False
-        node["permissions"] = new_mode
+    ):
         return True
+    return False
 
-    def apply_recursive(node):
-        ok = apply(node)
-        if node["type"] == "dir":
-            for child in node["children"].values():
-                if not apply_recursive(child):
-                    ok = False
-        return ok
+
+def _apply_mode(node, mode_str):
+    current = node.get("permissions", 0o644)
+    new_mode = parse_chmod_mode(current, mode_str)
+    if new_mode is None:
+        return False
+    node["permissions"] = new_mode
+    return True
+
+
+def _apply_mode_recursive(node, mode_str):
+    ok = _apply_mode(node, mode_str)
+    if node["type"] == "dir":
+        for child in node["children"].values():
+            if not _apply_mode_recursive(child, mode_str):
+                ok = False
+    return ok
+
+
+def cmd_chmod(args, vfs, state):
+    parsed = _parse_chmod_args(args)
+    if parsed is None:
+        return False
+    recursive, mode_str, targets = parsed
 
     overall_ok = True
     for target in targets:
@@ -404,13 +414,12 @@ def cmd_chmod(args, vfs, state):
             overall_ok = False
             continue
         if recursive:
-            if not apply_recursive(node):
-                print(f"chmod: неверный режим: '{mode_str}'")
-                return False
+            ok = _apply_mode_recursive(node, mode_str)
         else:
-            if not apply(node):
-                print(f"chmod: неверный режим: '{mode_str}'")
-                return False
+            ok = _apply_mode(node, mode_str)
+        if not ok:
+            print(f"chmod: неверный режим: '{mode_str}'")
+            return False
     return overall_ok
 
 
