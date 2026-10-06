@@ -45,7 +45,6 @@ def parse_symbolic_mode(current, mode_str):
                     shifts.append(3)
                 elif c == "o":
                     shifts.append(0)
-
         bits = 0
         for p in perm_chars:
             if p == "r":
@@ -56,7 +55,6 @@ def parse_symbolic_mode(current, mode_str):
                 bits |= 1
             else:
                 return None
-
         for shift in shifts:
             mask = 0b111 << shift
             if op == "+":
