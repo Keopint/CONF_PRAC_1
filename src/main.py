@@ -72,6 +72,7 @@ def parse_chmod_mode(current, mode_str):
         except ValueError:
             return None
         return value & 0o777
+
     if re.match(
         r"^[ugoa]*[+\-=][rwx]*(,[ugoa]*[+\-=][rwx]*)*$",
         mode_str,
