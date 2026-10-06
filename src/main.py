@@ -10,17 +10,39 @@ import getpass
 import time
 import datetime
 
+BIT_READ = 4
+BIT_WRITE = 2
+BIT_EXEC = 1
+PERM_BITS_MASK = 0b111
+
+SHIFT_USER = 6
+SHIFT_GROUP = 3
+SHIFT_OTHER = 0
+
+PERM_FULL_MASK = 0o777
+
+DEFAULT_DIR_PERMS = 0o755
+DEFAULT_FILE_PERMS = 0o644
+
+SECONDS_PER_MINUTE = 60
+SECONDS_PER_HOUR = 3600
+
+MIN_CHMOD_POSITIONAL = 2
+SINGLE_ARG = 1
+HISTORY_NUM_WIDTH = 5
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
 def mode_to_string(mode):
     chars = []
-    for shift in (6, 3, 0):
-        bits = (mode >> shift) & 0b111
-        chars.append("r" if bits & 4 else "-")
-        chars.append("w" if bits & 2 else "-")
-        chars.append("x" if bits & 1 else "-")
+    shifts = (SHIFT_USER, SHIFT_GROUP, SHIFT_OTHER)
+    for shift in shifts:
+        bits = (mode >> shift) & PERM_BITS_MASK
+        chars.append("r" if bits & BIT_READ else "-")
+        chars.append("w" if bits & BIT_WRITE else "-")
+        chars.append("x" if bits & BIT_EXEC else "-")
     return "".join(chars)
 
 
@@ -35,35 +57,36 @@ def parse_symbolic_mode(current, mode_str):
             who = "a"
 
         if "a" in who:
-            shifts = [6, 3, 0]
+            shifts = [SHIFT_USER, SHIFT_GROUP, SHIFT_OTHER]
         else:
             shifts = []
-            for c in who:
-                if c == "u":
-                    shifts.append(6)
-                elif c == "g":
-                    shifts.append(3)
-                elif c == "o":
-                    shifts.append(0)
+            if "u" in who:
+                shifts.append(SHIFT_USER)
+            if "g" in who:
+                shifts.append(SHIFT_GROUP)
+            if "o" in who:
+                shifts.append(SHIFT_OTHER)
+
         bits = 0
         for p in perm_chars:
             if p == "r":
-                bits |= 4
+                bits |= BIT_READ
             elif p == "w":
-                bits |= 2
+                bits |= BIT_WRITE
             elif p == "x":
-                bits |= 1
+                bits |= BIT_EXEC
             else:
                 return None
+
         for shift in shifts:
-            mask = 0b111 << shift
+            mask = PERM_BITS_MASK << shift
             if op == "+":
                 result |= (bits << shift)
             elif op == "-":
                 result &= ~(bits << shift)
             elif op == "=":
                 result = (result & ~mask) | (bits << shift)
-    return result & 0o777
+    return result & PERM_FULL_MASK
 
 
 def parse_chmod_mode(current, mode_str):
@@ -72,7 +95,7 @@ def parse_chmod_mode(current, mode_str):
             value = int(mode_str, 8)
         except ValueError:
             return None
-        return value & 0o777
+        return value & PERM_FULL_MASK
     if re.match(
         r"^[ugoa]*[+\-=][rwx]*(,[ugoa]*[+\-=][rwx]*)*$",
         mode_str,
@@ -83,7 +106,7 @@ def parse_chmod_mode(current, mode_str):
 class VirtualFileSystem:
     def __init__(self, csv_path=None):
         self.root = {"type": "dir", "children": {},
-                     "permissions": 0o755, "data": None}
+                     "permissions": DEFAULT_DIR_PERMS, "data": None}
         self.current = []
         self.source = None
         if csv_path is not None:
@@ -104,7 +127,7 @@ class VirtualFileSystem:
         if not required.issubset(rows[0].keys()):
             raise ValueError("Неверный формат CSV")
         new_root = {"type": "dir", "children": {},
-                    "permissions": 0o755, "data": None}
+                    "permissions": DEFAULT_DIR_PERMS, "data": None}
         for i, row in enumerate(rows, start=2):
             try:
                 self._insert(new_root, row)
@@ -319,7 +342,7 @@ def cmd_ls(args, vfs, state):
 
 
 def cmd_cd(args, vfs, state):
-    if len(args) > 1:
+    if len(args) > SINGLE_ARG:
         print("cd: слишком много аргументов")
         return False
     path = args[0] if args else "~"
@@ -346,14 +369,14 @@ def _parse_chmod_args(args):
             print("  РЕЖИМ — числовой (755) "
                   "или символьный (u+x,go-w,a=r)")
             return None
-        elif a.startswith("-") and len(a) > 1 \
+        elif a.startswith("-") and len(a) > SINGLE_ARG \
                 and not a[1].isdigit():
             print(f"chmod: неизвестный параметр: {a}")
             return None
         else:
             positional.append(a)
 
-    if len(positional) < 2:
+    if len(positional) < MIN_CHMOD_POSITIONAL:
         print("chmod: не указан режим или файл")
         print("Использование: chmod [-R] РЕЖИМ ФАЙЛ...")
         return None
@@ -380,7 +403,7 @@ def _is_valid_mode(mode_str):
 
 
 def _apply_mode(node, mode_str):
-    current = node.get("permissions", 0o644)
+    current = node.get("permissions", DEFAULT_FILE_PERMS)
     new_mode = parse_chmod_mode(current, mode_str)
     if new_mode is None:
         return False
@@ -427,8 +450,8 @@ def cmd_uptime(args, vfs, state):
         print("uptime: команда не принимает аргументов")
         return False
     sec = state.uptime()
-    h = sec // 3600
-    m = (sec % 3600) // 60
+    h = sec // SECONDS_PER_HOUR
+    m = (sec % SECONDS_PER_HOUR) // SECONDS_PER_MINUTE
     now = datetime.datetime.now().strftime("%H:%M:%S")
     print(f" {now} up {h}:{m:02d}, 1 user, "
           f"load average: 0.00, 0.01, 0.05")
